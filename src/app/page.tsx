@@ -2,33 +2,14 @@
 
 import { useState, useEffect } from 'react'
 import { Calendar, FileText, Plus, Check, X, AlertCircle, Upload, Trash2, User, LogOut, Home, Settings, ChevronLeft, ChevronRight } from 'lucide-react'
-
-interface Boleto {
-  id: string
-  nome: string
-  valor: number
-  dataVencimento: string
-  pago: boolean
-  arquivo?: string
-  codigoBarras?: string
-  dataCriacao: string
-}
-
-interface Usuario {
-  username: string
-  password: string
-}
-
-const usuarios: Usuario[] = [
-  { username: 'aecreboque', password: '123' },
-  { username: 'gabriel', password: 'laranja42' }
-]
+import { boletosService, usuariosService, inicializarBanco, type Boleto, type Usuario } from '@/lib/database'
 
 export default function GerenciadorBoletos() {
-  const [usuarioLogado, setUsuarioLogado] = useState<string | null>(null)
+  const [usuarioLogado, setUsuarioLogado] = useState<Usuario | null>(null)
   const [telaAtual, setTelaAtual] = useState<'home' | 'adicionar' | 'gerenciar'>('home')
   const [credenciais, setCredenciais] = useState({ username: '', password: '' })
   const [boletos, setBoletos] = useState<Boleto[]>([])
+  const [carregando, setCarregando] = useState(true)
   
   // Estados para gerenciar boletos
   const [mesAtual, setMesAtual] = useState(new Date().getMonth())
@@ -44,82 +25,135 @@ export default function GerenciadorBoletos() {
     codigoBarras: ''
   })
 
-  // Carregar dados do localStorage
+  // Inicializar banco de dados e carregar dados
   useEffect(() => {
-    const usuarioStorage = localStorage.getItem('usuarioLogado')
-    const boletosStorage = localStorage.getItem('boletos')
-    
-    if (usuarioStorage) {
-      setUsuarioLogado(usuarioStorage)
+    const inicializar = async () => {
+      try {
+        await inicializarBanco()
+        
+        // Verificar se há usuário logado no localStorage
+        const usuarioStorage = localStorage.getItem('usuarioLogado')
+        if (usuarioStorage) {
+          const usuario = await usuariosService.buscarUsuario(usuarioStorage)
+          if (usuario) {
+            setUsuarioLogado(usuario)
+            await carregarBoletos(usuario.id)
+          }
+        }
+      } catch (error) {
+        console.error('Erro ao inicializar:', error)
+      } finally {
+        setCarregando(false)
+      }
     }
-    if (boletosStorage) {
-      setBoletos(JSON.parse(boletosStorage))
-    }
+
+    inicializar()
   }, [])
 
-  // Salvar boletos no localStorage
-  useEffect(() => {
-    if (boletos.length > 0) {
-      localStorage.setItem('boletos', JSON.stringify(boletos))
+  // Carregar boletos do usuário
+  const carregarBoletos = async (usuarioId: string) => {
+    try {
+      const boletosCarregados = await boletosService.buscarBoletos(usuarioId)
+      setBoletos(boletosCarregados)
+    } catch (error) {
+      console.error('Erro ao carregar boletos:', error)
     }
-  }, [boletos])
+  }
 
   // Função de login
-  const fazerLogin = () => {
-    const usuario = usuarios.find(u => 
-      u.username === credenciais.username && u.password === credenciais.password
-    )
-    
-    if (usuario) {
-      setUsuarioLogado(usuario.username)
-      localStorage.setItem('usuarioLogado', usuario.username)
-      setCredenciais({ username: '', password: '' })
-    } else {
-      alert('Usuário ou senha incorretos!')
+  const fazerLogin = async () => {
+    try {
+      const usuario = await usuariosService.buscarUsuario(credenciais.username)
+      
+      if (usuario && usuario.password === credenciais.password) {
+        setUsuarioLogado(usuario)
+        localStorage.setItem('usuarioLogado', usuario.username)
+        setCredenciais({ username: '', password: '' })
+        await carregarBoletos(usuario.id)
+      } else {
+        alert('Usuário ou senha incorretos!')
+      }
+    } catch (error) {
+      console.error('Erro no login:', error)
+      alert('Erro ao fazer login. Tente novamente.')
     }
   }
 
   // Função de logout
   const fazerLogout = () => {
     setUsuarioLogado(null)
+    setBoletos([])
     localStorage.removeItem('usuarioLogado')
     setTelaAtual('home')
   }
 
   // Adicionar novo boleto
-  const adicionarBoleto = () => {
-    if (!novoBoleto.nome || !novoBoleto.valor || !novoBoleto.dataVencimento) {
+  const adicionarBoleto = async () => {
+    if (!novoBoleto.nome || !novoBoleto.valor || !novoBoleto.dataVencimento || !usuarioLogado) {
       alert('Preencha todos os campos obrigatórios')
       return
     }
 
-    const boleto: Boleto = {
-      id: Date.now().toString(),
-      nome: novoBoleto.nome,
-      valor: parseFloat(novoBoleto.valor),
-      dataVencimento: novoBoleto.dataVencimento,
-      pago: false,
-      arquivo: novoBoleto.arquivo?.name,
-      codigoBarras: novoBoleto.codigoBarras || undefined,
-      dataCriacao: new Date().toISOString()
-    }
+    try {
+      const novoBoletoDB = await boletosService.adicionarBoleto({
+        nome: novoBoleto.nome,
+        valor: parseFloat(novoBoleto.valor),
+        dataVencimento: novoBoleto.dataVencimento,
+        pago: false,
+        arquivo: novoBoleto.arquivo?.name,
+        codigoBarras: novoBoleto.codigoBarras || undefined,
+        usuarioId: usuarioLogado.id
+      })
 
-    setBoletos([...boletos, boleto])
-    setNovoBoleto({ nome: '', valor: '', dataVencimento: '', arquivo: null, codigoBarras: '' })
-    alert('Boleto adicionado com sucesso!')
+      if (novoBoletoDB) {
+        setBoletos([...boletos, novoBoletoDB])
+        setNovoBoleto({ nome: '', valor: '', dataVencimento: '', arquivo: null, codigoBarras: '' })
+        alert('Boleto adicionado com sucesso!')
+      } else {
+        alert('Erro ao adicionar boleto. Tente novamente.')
+      }
+    } catch (error) {
+      console.error('Erro ao adicionar boleto:', error)
+      alert('Erro ao adicionar boleto. Tente novamente.')
+    }
   }
 
   // Marcar como pago/pendente
-  const alternarStatusPagamento = (id: string) => {
-    setBoletos(boletos.map(boleto => 
-      boleto.id === id ? { ...boleto, pago: !boleto.pago } : boleto
-    ))
+  const alternarStatusPagamento = async (id: string) => {
+    try {
+      const boleto = boletos.find(b => b.id === id)
+      if (!boleto) return
+
+      const sucesso = await boletosService.atualizarBoleto(id, { pago: !boleto.pago })
+      
+      if (sucesso) {
+        setBoletos(boletos.map(b => 
+          b.id === id ? { ...b, pago: !b.pago } : b
+        ))
+      } else {
+        alert('Erro ao atualizar status do boleto.')
+      }
+    } catch (error) {
+      console.error('Erro ao alterar status:', error)
+      alert('Erro ao atualizar status do boleto.')
+    }
   }
 
   // Remover boleto
-  const removerBoleto = (id: string) => {
-    if (confirm('Tem certeza que deseja remover este boleto?')) {
-      setBoletos(boletos.filter(boleto => boleto.id !== id))
+  const removerBoleto = async (id: string) => {
+    if (!confirm('Tem certeza que deseja remover este boleto?')) return
+
+    try {
+      const sucesso = await boletosService.removerBoleto(id)
+      
+      if (sucesso) {
+        setBoletos(boletos.filter(boleto => boleto.id !== id))
+      } else {
+        alert('Erro ao remover boleto.')
+      }
+    } catch (error) {
+      console.error('Erro ao remover boleto:', error)
+      alert('Erro ao remover boleto.')
     }
   }
 
@@ -159,6 +193,18 @@ export default function GerenciadorBoletos() {
     return valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
   }
 
+  // Tela de carregamento
+  if (carregando) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-2xl p-8 text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Inicializando banco de dados...</p>
+        </div>
+      </div>
+    )
+  }
+
   // Tela de Login
   if (!usuarioLogado) {
     return (
@@ -170,6 +216,7 @@ export default function GerenciadorBoletos() {
             </div>
             <h1 className="text-2xl font-bold text-gray-800">Gerenciador de Boletos</h1>
             <p className="text-gray-600 mt-2">Faça login para continuar</p>
+            <p className="text-sm text-green-600 mt-2">✅ Banco de dados conectado</p>
           </div>
 
           <div className="space-y-4">
@@ -224,7 +271,8 @@ export default function GerenciadorBoletos() {
             <FileText className="text-blue-600" />
             Gerenciador de Boletos
           </h1>
-          <p className="text-gray-600 mt-1">Bem-vindo, {usuarioLogado}!</p>
+          <p className="text-gray-600 mt-1">Bem-vindo, {usuarioLogado.username}!</p>
+          <p className="text-sm text-green-600">🗄️ Banco de dados ativo</p>
         </div>
         <button
           onClick={fazerLogout}
