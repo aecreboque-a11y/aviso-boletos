@@ -1,8 +1,3 @@
-"use client"
-
-import { promises as fs } from 'fs'
-import path from 'path'
-
 export interface Boleto {
   id: string
   nome: string
@@ -22,43 +17,48 @@ export interface Usuario {
   createdAt: string
 }
 
-// Caminhos dos arquivos de dados
-const DATA_DIR = path.join(process.cwd(), 'data')
-const BOLETOS_DIR = path.join(DATA_DIR, 'boletos')
-const PDFS_DIR = path.join(DATA_DIR, 'pdfs')
-const USUARIOS_FILE = path.join(DATA_DIR, 'usuarios.json')
-const BOLETOS_FILE = path.join(DATA_DIR, 'boletos.json')
-
-// Função para garantir que as pastas existam
-const garantirPastas = async () => {
+// Função para fazer requisições à API
+const apiRequest = async (url: string, options?: RequestInit) => {
   try {
-    await fs.mkdir(DATA_DIR, { recursive: true })
-    await fs.mkdir(BOLETOS_DIR, { recursive: true })
-    await fs.mkdir(PDFS_DIR, { recursive: true })
-    console.log('📁 Pastas de dados criadas/verificadas com sucesso!')
+    const response = await fetch(url, {
+      headers: {
+        'Content-Type': 'application/json',
+        ...options?.headers,
+      },
+      ...options,
+    })
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`)
+    }
+    
+    return await response.json()
   } catch (error) {
-    console.error('Erro ao criar pastas:', error)
-  }
-}
-
-// Função para ler arquivo JSON
-const lerArquivoJSON = async (caminho: string, valorPadrao: any = []) => {
-  try {
-    const dados = await fs.readFile(caminho, 'utf-8')
-    return JSON.parse(dados)
-  } catch (error) {
-    // Se o arquivo não existir, retorna o valor padrão
-    return valorPadrao
-  }
-}
-
-// Função para escrever arquivo JSON
-const escreverArquivoJSON = async (caminho: string, dados: any) => {
-  try {
-    await fs.writeFile(caminho, JSON.stringify(dados, null, 2), 'utf-8')
-  } catch (error) {
-    console.error('Erro ao escrever arquivo:', error)
+    console.error('Erro na requisição API:', error)
     throw error
+  }
+}
+
+// Fallback para localStorage quando API não estiver disponível
+const getLocalStorageData = (key: string, defaultValue: any = []) => {
+  if (typeof window === 'undefined') return defaultValue
+  
+  try {
+    const data = localStorage.getItem(key)
+    return data ? JSON.parse(data) : defaultValue
+  } catch (error) {
+    console.error('Erro ao ler localStorage:', error)
+    return defaultValue
+  }
+}
+
+const setLocalStorageData = (key: string, data: any) => {
+  if (typeof window === 'undefined') return
+  
+  try {
+    localStorage.setItem(key, JSON.stringify(data))
+  } catch (error) {
+    console.error('Erro ao salvar no localStorage:', error)
   }
 }
 
@@ -67,56 +67,94 @@ export const boletosService = {
   // Buscar todos os boletos de um usuário
   async buscarBoletos(usuarioId: string): Promise<Boleto[]> {
     try {
-      const boletos = await lerArquivoJSON(BOLETOS_FILE, [])
-      return boletos
-        .filter((boleto: Boleto) => boleto.usuarioId === usuarioId)
-        .sort((a: Boleto, b: Boleto) => new Date(a.dataVencimento).getTime() - new Date(b.dataVencimento).getTime())
+      const result = await apiRequest(`/api/database?action=buscarBoletos&usuarioId=${usuarioId}`)
+      
+      if (result.success) {
+        // Sincronizar com localStorage
+        setLocalStorageData(`boletos_${usuarioId}`, result.data)
+        return result.data
+      } else {
+        throw new Error(result.error)
+      }
     } catch (error) {
-      console.error('Erro ao buscar boletos:', error)
-      return []
+      console.warn('API indisponível, usando localStorage:', error)
+      // Fallback para localStorage
+      const boletos = getLocalStorageData(`boletos_${usuarioId}`, [])
+      return boletos.sort((a: Boleto, b: Boleto) => 
+        new Date(a.dataVencimento).getTime() - new Date(b.dataVencimento).getTime()
+      )
     }
   },
 
   // Adicionar novo boleto
   async adicionarBoleto(boleto: Omit<Boleto, 'id' | 'dataCriacao'>): Promise<Boleto | null> {
     try {
-      const boletos = await lerArquivoJSON(BOLETOS_FILE, [])
+      const result = await apiRequest('/api/database', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'adicionarBoleto', boleto })
+      })
       
+      if (result.success) {
+        // Atualizar localStorage
+        const boletosExistentes = getLocalStorageData(`boletos_${boleto.usuarioId}`, [])
+        const boletosAtualizados = [...boletosExistentes, result.data]
+        setLocalStorageData(`boletos_${boleto.usuarioId}`, boletosAtualizados)
+        
+        console.log('✅ Boleto adicionado ao banco local:', result.data.nome)
+        return result.data
+      } else {
+        throw new Error(result.error)
+      }
+    } catch (error) {
+      console.warn('API indisponível, usando localStorage:', error)
+      // Fallback para localStorage
       const novoBoleto: Boleto = {
         ...boleto,
         id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
         dataCriacao: new Date().toISOString()
       }
-
-      boletos.push(novoBoleto)
-      await escreverArquivoJSON(BOLETOS_FILE, boletos)
       
-      console.log('✅ Boleto adicionado ao banco local:', novoBoleto.nome)
+      const boletosExistentes = getLocalStorageData(`boletos_${boleto.usuarioId}`, [])
+      const boletosAtualizados = [...boletosExistentes, novoBoleto]
+      setLocalStorageData(`boletos_${boleto.usuarioId}`, boletosAtualizados)
+      
+      console.log('✅ Boleto adicionado ao localStorage:', novoBoleto.nome)
       return novoBoleto
-    } catch (error) {
-      console.error('Erro ao adicionar boleto:', error)
-      return null
     }
   },
 
   // Atualizar boleto
   async atualizarBoleto(id: string, updates: Partial<Omit<Boleto, 'id' | 'dataCriacao' | 'usuarioId'>>): Promise<boolean> {
     try {
-      const boletos = await lerArquivoJSON(BOLETOS_FILE, [])
-      const indice = boletos.findIndex((boleto: Boleto) => boleto.id === id)
+      const result = await apiRequest('/api/database', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'atualizarBoleto', id, updates })
+      })
       
-      if (indice === -1) {
-        console.error('Boleto não encontrado:', id)
-        return false
+      if (result.success) {
+        console.log('✅ Boleto atualizado no banco local:', id)
+        return true
+      } else {
+        throw new Error(result.error)
       }
-
-      boletos[indice] = { ...boletos[indice], ...updates }
-      await escreverArquivoJSON(BOLETOS_FILE, boletos)
-      
-      console.log('✅ Boleto atualizado no banco local:', id)
-      return true
     } catch (error) {
-      console.error('Erro ao atualizar boleto:', error)
+      console.warn('API indisponível, usando localStorage:', error)
+      // Fallback para localStorage - precisamos encontrar o usuário do boleto
+      const allKeys = Object.keys(localStorage).filter(key => key.startsWith('boletos_'))
+      
+      for (const key of allKeys) {
+        const boletos = getLocalStorageData(key, [])
+        const indice = boletos.findIndex((boleto: Boleto) => boleto.id === id)
+        
+        if (indice !== -1) {
+          boletos[indice] = { ...boletos[indice], ...updates }
+          setLocalStorageData(key, boletos)
+          console.log('✅ Boleto atualizado no localStorage:', id)
+          return true
+        }
+      }
+      
+      console.error('Boleto não encontrado:', id)
       return false
     }
   },
@@ -124,20 +162,34 @@ export const boletosService = {
   // Remover boleto
   async removerBoleto(id: string): Promise<boolean> {
     try {
-      const boletos = await lerArquivoJSON(BOLETOS_FILE, [])
-      const boletosAtualizados = boletos.filter((boleto: Boleto) => boleto.id !== id)
+      const result = await apiRequest('/api/database', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'removerBoleto', id })
+      })
       
-      if (boletos.length === boletosAtualizados.length) {
-        console.error('Boleto não encontrado para remoção:', id)
-        return false
+      if (result.success) {
+        console.log('✅ Boleto removido do banco local:', id)
+        return true
+      } else {
+        throw new Error(result.error)
       }
-
-      await escreverArquivoJSON(BOLETOS_FILE, boletosAtualizados)
-      
-      console.log('✅ Boleto removido do banco local:', id)
-      return true
     } catch (error) {
-      console.error('Erro ao remover boleto:', error)
+      console.warn('API indisponível, usando localStorage:', error)
+      // Fallback para localStorage - precisamos encontrar o usuário do boleto
+      const allKeys = Object.keys(localStorage).filter(key => key.startsWith('boletos_'))
+      
+      for (const key of allKeys) {
+        const boletos = getLocalStorageData(key, [])
+        const boletosAtualizados = boletos.filter((boleto: Boleto) => boleto.id !== id)
+        
+        if (boletos.length !== boletosAtualizados.length) {
+          setLocalStorageData(key, boletosAtualizados)
+          console.log('✅ Boleto removido do localStorage:', id)
+          return true
+        }
+      }
+      
+      console.error('Boleto não encontrado para remoção:', id)
       return false
     }
   }
@@ -148,55 +200,74 @@ export const usuariosService = {
   // Buscar usuário por username
   async buscarUsuario(username: string): Promise<Usuario | null> {
     try {
-      const usuarios = await lerArquivoJSON(USUARIOS_FILE, [])
+      const result = await apiRequest(`/api/database?action=buscarUsuario&username=${username}`)
+      
+      if (result.success) {
+        // Sincronizar com localStorage
+        if (result.data) {
+          setLocalStorageData('usuarios', getLocalStorageData('usuarios', []).concat(result.data))
+        }
+        return result.data
+      } else {
+        throw new Error(result.error)
+      }
+    } catch (error) {
+      console.warn('API indisponível, usando localStorage:', error)
+      // Fallback para localStorage
+      const usuarios = getLocalStorageData('usuarios', [
+        { id: '1', username: 'aecreboque', password: '123', createdAt: new Date().toISOString() },
+        { id: '2', username: 'gabriel', password: 'laranja42', createdAt: new Date().toISOString() }
+      ])
+      
       const usuario = usuarios.find((u: Usuario) => u.username === username)
       return usuario || null
-    } catch (error) {
-      console.error('Erro ao buscar usuário:', error)
-      return null
     }
   },
 
   // Criar usuário
   async criarUsuario(username: string, password: string): Promise<Usuario | null> {
     try {
-      const usuarios = await lerArquivoJSON(USUARIOS_FILE, [])
+      const result = await apiRequest('/api/database', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'criarUsuario', username, password })
+      })
       
+      if (result.success) {
+        // Atualizar localStorage
+        const usuariosExistentes = getLocalStorageData('usuarios', [])
+        const usuariosAtualizados = [...usuariosExistentes, result.data]
+        setLocalStorageData('usuarios', usuariosAtualizados)
+        
+        console.log('✅ Usuário criado no banco local:', username)
+        return result.data
+      } else {
+        throw new Error(result.error)
+      }
+    } catch (error) {
+      console.warn('API indisponível, usando localStorage:', error)
+      // Fallback para localStorage
       const novoUsuario: Usuario = {
         id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
         username,
         password,
         createdAt: new Date().toISOString()
       }
-
-      usuarios.push(novoUsuario)
-      await escreverArquivoJSON(USUARIOS_FILE, usuarios)
       
-      console.log('✅ Usuário criado no banco local:', username)
+      const usuariosExistentes = getLocalStorageData('usuarios', [])
+      const usuariosAtualizados = [...usuariosExistentes, novoUsuario]
+      setLocalStorageData('usuarios', usuariosAtualizados)
+      
+      console.log('✅ Usuário criado no localStorage:', username)
       return novoUsuario
-    } catch (error) {
-      console.error('Erro ao criar usuário:', error)
-      return null
     }
   }
 }
 
-// Função para salvar arquivo PDF
+// Função para salvar arquivo PDF (apenas placeholder - não funciona no browser)
 export const salvarArquivoPDF = async (arquivo: File, nomeArquivo: string): Promise<string | null> => {
-  try {
-    await garantirPastas()
-    
-    const buffer = await arquivo.arrayBuffer()
-    const caminhoArquivo = path.join(PDFS_DIR, nomeArquivo)
-    
-    await fs.writeFile(caminhoArquivo, Buffer.from(buffer))
-    
-    console.log('📄 PDF salvo com sucesso:', nomeArquivo)
-    return caminhoArquivo
-  } catch (error) {
-    console.error('Erro ao salvar PDF:', error)
-    return null
-  }
+  console.log('📄 PDF seria salvo como:', nomeArquivo)
+  console.log('⚠️ Salvamento de arquivos não disponível no browser')
+  return nomeArquivo // Retorna o nome para manter compatibilidade
 }
 
 // Função para inicializar o banco de dados local
@@ -204,31 +275,32 @@ export const inicializarBanco = async () => {
   try {
     console.log('🔧 Inicializando banco de dados local...')
     
-    // Garantir que as pastas existam
-    await garantirPastas()
+    // Tentar inicializar via API
+    try {
+      const result = await apiRequest('/api/database?action=inicializar')
+      if (result.success) {
+        console.log('✅ Banco de dados local inicializado via API!')
+        return
+      }
+    } catch (error) {
+      console.warn('API indisponível, usando localStorage:', error)
+    }
     
-    // Verificar se o arquivo de usuários existe, se não, criar com usuários padrão
-    const usuarios = await lerArquivoJSON(USUARIOS_FILE, [])
+    // Fallback para localStorage
+    const usuarios = getLocalStorageData('usuarios', [])
     
     if (usuarios.length === 0) {
       const usuariosDefault = [
-        { username: 'aecreboque', password: '123' },
-        { username: 'gabriel', password: 'laranja42' }
+        { id: '1', username: 'aecreboque', password: '123', createdAt: new Date().toISOString() },
+        { id: '2', username: 'gabriel', password: 'laranja42', createdAt: new Date().toISOString() }
       ]
-
-      for (const usuario of usuariosDefault) {
-        await usuariosService.criarUsuario(usuario.username, usuario.password)
-      }
       
-      console.log('👥 Usuários padrão criados no banco local')
+      setLocalStorageData('usuarios', usuariosDefault)
+      console.log('👥 Usuários padrão criados no localStorage')
     }
-
-    // Verificar se o arquivo de boletos existe
-    await lerArquivoJSON(BOLETOS_FILE, [])
     
-    console.log('✅ Banco de dados local inicializado com sucesso!')
-    console.log('📁 Dados salvos em:', DATA_DIR)
-    console.log('📄 PDFs salvos em:', PDFS_DIR)
+    console.log('✅ Banco de dados local inicializado com localStorage!')
+    console.log('💾 Dados salvos no navegador (localStorage)')
     
   } catch (error) {
     console.error('❌ Erro ao inicializar banco de dados local:', error)
