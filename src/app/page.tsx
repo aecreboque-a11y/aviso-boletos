@@ -1,8 +1,8 @@
 "use client"
 
 import { useState, useEffect } from 'react'
-import { Calendar, FileText, Plus, Check, X, AlertCircle, Upload, Trash2, User, LogOut, Home, Settings, ChevronLeft, ChevronRight } from 'lucide-react'
-import { boletosService, usuariosService, inicializarBanco, salvarArquivoPDF, type Boleto, type Usuario } from '@/lib/local-database'
+import { Calendar, FileText, Plus, Check, X, AlertCircle, Upload, Trash2, User, LogOut, Home, Settings, ChevronLeft, ChevronRight, ExternalLink } from 'lucide-react'
+import { boletosService, usuariosService, inicializarBanco, salvarArquivoPDF, abrirArquivo, type Boleto, type Usuario } from '@/lib/local-database'
 
 export default function GerenciadorBoletos() {
   const [usuarioLogado, setUsuarioLogado] = useState<Usuario | null>(null)
@@ -97,9 +97,10 @@ export default function GerenciadorBoletos() {
     try {
       let nomeArquivo = undefined
       
-      // Salvar arquivo PDF se fornecido
+      // Salvar arquivo se fornecido (qualquer tipo de arquivo)
       if (novoBoleto.arquivo) {
         const timestamp = Date.now()
+        const extensao = novoBoleto.arquivo.name.split('.').pop() || ''
         const nomeArquivoCompleto = `${timestamp}_${novoBoleto.arquivo.name}`
         const caminhoSalvo = await salvarArquivoPDF(novoBoleto.arquivo, nomeArquivoCompleto)
         if (caminhoSalvo) {
@@ -494,11 +495,11 @@ export default function GerenciadorBoletos() {
               </div>
 
               <div className="md:col-span-2">
-                <label className="block text-gray-700 font-medium mb-2">Arquivo PDF (opcional)</label>
+                <label className="block text-gray-700 font-medium mb-2">Arquivo (PDF, PNG, JPG, etc.) - opcional</label>
                 <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-blue-400 transition-colors">
                   <input
                     type="file"
-                    accept=".pdf"
+                    accept=".pdf,.png,.jpg,.jpeg,.gif,.webp"
                     onChange={(e) => setNovoBoleto({...novoBoleto, arquivo: e.target.files?.[0] || null})}
                     className="hidden"
                     id="arquivo-upload"
@@ -506,10 +507,13 @@ export default function GerenciadorBoletos() {
                   <label htmlFor="arquivo-upload" className="cursor-pointer">
                     <Upload className="mx-auto text-gray-400 mb-2" size={32} />
                     <p className="text-gray-600">
-                      {novoBoleto.arquivo ? novoBoleto.arquivo.name : 'Clique para selecionar o PDF do boleto'}
+                      {novoBoleto.arquivo ? novoBoleto.arquivo.name : 'Clique para selecionar o arquivo do boleto'}
                     </p>
                     <p className="text-xs text-gray-500 mt-1">
                       O arquivo será salvo na pasta 'data/pdfs' do projeto
+                    </p>
+                    <p className="text-xs text-blue-600 mt-1">
+                      Aceita: PDF, PNG, JPG, GIF, WEBP
                     </p>
                   </label>
                 </div>
@@ -697,9 +701,15 @@ export default function GerenciadorBoletos() {
                                   </div>
                                 )}
                                 {boleto.arquivo && (
-                                  <div className="flex items-center gap-2 text-blue-600">
-                                    <FileText size={14} />
-                                    <span className="text-xs">{boleto.arquivo}</span>
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      onClick={() => abrirArquivo(boleto.arquivo!)}
+                                      className="flex items-center gap-1 text-blue-600 hover:text-blue-800 transition-colors"
+                                    >
+                                      <FileText size={14} />
+                                      <span className="text-xs underline">{boleto.arquivo}</span>
+                                      <ExternalLink size={12} />
+                                    </button>
                                   </div>
                                 )}
                               </div>

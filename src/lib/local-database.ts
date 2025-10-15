@@ -168,6 +168,19 @@ export const boletosService = {
       })
       
       if (result.success) {
+        // Atualizar localStorage também
+        const allKeys = Object.keys(localStorage).filter(key => key.startsWith('boletos_'))
+        
+        for (const key of allKeys) {
+          const boletos = getLocalStorageData(key, [])
+          const boletosAtualizados = boletos.filter((boleto: Boleto) => boleto.id !== id)
+          
+          if (boletos.length !== boletosAtualizados.length) {
+            setLocalStorageData(key, boletosAtualizados)
+            break
+          }
+        }
+        
         console.log('✅ Boleto removido do banco local:', id)
         return true
       } else {
@@ -263,11 +276,47 @@ export const usuariosService = {
   }
 }
 
-// Função para salvar arquivo PDF (apenas placeholder - não funciona no browser)
+// Função para salvar arquivo na pasta pdfs
 export const salvarArquivoPDF = async (arquivo: File, nomeArquivo: string): Promise<string | null> => {
-  console.log('📄 PDF seria salvo como:', nomeArquivo)
-  console.log('⚠️ Salvamento de arquivos não disponível no browser')
-  return nomeArquivo // Retorna o nome para manter compatibilidade
+  try {
+    console.log('📄 Salvando arquivo:', nomeArquivo)
+    
+    // Criar FormData para enviar o arquivo
+    const formData = new FormData()
+    formData.append('action', 'salvarArquivo')
+    formData.append('arquivo', arquivo)
+    formData.append('nomeArquivo', nomeArquivo)
+    
+    const response = await fetch('/api/database', {
+      method: 'POST',
+      body: formData
+    })
+    
+    const result = await response.json()
+    
+    if (result.success) {
+      console.log('✅ Arquivo salvo com sucesso na pasta pdfs:', nomeArquivo)
+      return nomeArquivo
+    } else {
+      console.error('❌ Erro ao salvar arquivo:', result.error)
+      return null
+    }
+  } catch (error) {
+    console.error('❌ Erro ao salvar arquivo:', error)
+    return null
+  }
+}
+
+// Função para abrir arquivo salvo
+export const abrirArquivo = (nomeArquivo: string) => {
+  try {
+    const url = `/api/database?action=abrirArquivo&arquivo=${encodeURIComponent(nomeArquivo)}`
+    window.open(url, '_blank')
+    console.log('📂 Abrindo arquivo:', nomeArquivo)
+  } catch (error) {
+    console.error('❌ Erro ao abrir arquivo:', error)
+    alert('Erro ao abrir arquivo. Verifique se o arquivo foi salvo corretamente.')
+  }
 }
 
 // Função para inicializar o banco de dados local
@@ -280,6 +329,7 @@ export const inicializarBanco = async () => {
       const result = await apiRequest('/api/database?action=inicializar')
       if (result.success) {
         console.log('✅ Banco de dados local inicializado via API!')
+        console.log('📁 Pasta data/pdfs criada para salvar arquivos!')
         return
       }
     } catch (error) {
@@ -301,6 +351,7 @@ export const inicializarBanco = async () => {
     
     console.log('✅ Banco de dados local inicializado com localStorage!')
     console.log('💾 Dados salvos no navegador (localStorage)')
+    console.log('⚠️ Arquivos não podem ser salvos fisicamente no navegador')
     
   } catch (error) {
     console.error('❌ Erro ao inicializar banco de dados local:', error)

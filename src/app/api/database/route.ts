@@ -99,6 +99,7 @@ export async function GET(request: NextRequest) {
   const action = searchParams.get('action')
   const usuarioId = searchParams.get('usuarioId')
   const username = searchParams.get('username')
+  const arquivo = searchParams.get('arquivo')
 
   try {
     await inicializarBanco()
@@ -123,6 +124,54 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ success: true, message: 'Banco inicializado' })
     }
 
+    // Nova funcionalidade: servir arquivos da pasta pdfs
+    if (action === 'abrirArquivo' && arquivo) {
+      try {
+        const caminhoArquivo = path.join(PDFS_DIR, arquivo)
+        
+        // Verificar se o arquivo existe
+        await fs.access(caminhoArquivo)
+        
+        // Ler o arquivo
+        const conteudoArquivo = await fs.readFile(caminhoArquivo)
+        
+        // Determinar o tipo de conteúdo baseado na extensão
+        const extensao = path.extname(arquivo).toLowerCase()
+        let contentType = 'application/octet-stream'
+        
+        switch (extensao) {
+          case '.pdf':
+            contentType = 'application/pdf'
+            break
+          case '.png':
+            contentType = 'image/png'
+            break
+          case '.jpg':
+          case '.jpeg':
+            contentType = 'image/jpeg'
+            break
+          case '.gif':
+            contentType = 'image/gif'
+            break
+          case '.webp':
+            contentType = 'image/webp'
+            break
+          default:
+            contentType = 'application/octet-stream'
+        }
+        
+        return new NextResponse(conteudoArquivo, {
+          headers: {
+            'Content-Type': contentType,
+            'Content-Disposition': `inline; filename="${arquivo}"`,
+          },
+        })
+      } catch (error) {
+        console.error('Erro ao abrir arquivo:', error)
+        return NextResponse.json({ success: false, error: 'Arquivo não encontrado' }, { status: 404 })
+      }
+    }
+
     return NextResponse.json({ success: false, error: 'Ação não reconhecida' })
   } catch (error) {
     console.error('Erro na API:', error)
@@ -132,10 +181,49 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const contentType = request.headers.get('content-type')
+    
+    await inicializarBanco()
+
+    // Lidar com upload de arquivos (FormData)
+    if (contentType?.includes('multipart/form-data')) {
+      const formData = await request.formData()
+      const action = formData.get('action') as string
+      
+      if (action === 'salvarArquivo') {
+        const arquivo = formData.get('arquivo') as File
+        const nomeArquivo = formData.get('nomeArquivo') as string
+        
+        if (!arquivo || !nomeArquivo) {
+          return NextResponse.json({ success: false, error: 'Arquivo ou nome não fornecido' })
+        }
+        
+        try {
+          // Converter o arquivo para buffer
+          const bytes = await arquivo.arrayBuffer()
+          const buffer = Buffer.from(bytes)
+          
+          // Salvar o arquivo na pasta pdfs
+          const caminhoArquivo = path.join(PDFS_DIR, nomeArquivo)
+          await fs.writeFile(caminhoArquivo, buffer)
+          
+          console.log('📄 Arquivo salvo com sucesso:', caminhoArquivo)
+          return NextResponse.json({ 
+            success: true, 
+            message: 'Arquivo salvo com sucesso',
+            nomeArquivo: nomeArquivo,
+            caminho: caminhoArquivo
+          })
+        } catch (error) {
+          console.error('Erro ao salvar arquivo:', error)
+          return NextResponse.json({ success: false, error: 'Erro ao salvar arquivo' })
+        }
+      }
+    }
+
+    // Lidar com requisições JSON normais
     const body = await request.json()
     const { action } = body
-
-    await inicializarBanco()
 
     if (action === 'adicionarBoleto') {
       const { boleto } = body
