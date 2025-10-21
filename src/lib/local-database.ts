@@ -5,6 +5,7 @@ export interface Boleto {
   dataVencimento: string
   pago: boolean
   arquivo?: string
+  comprovante?: string
   codigoBarras?: string
   dataCriacao: string
   usuarioId: string
@@ -303,6 +304,41 @@ export const salvarArquivoPDF = async (arquivo: File, nomeArquivo: string): Prom
     }
   } catch (error) {
     console.error('❌ Erro ao salvar arquivo:', error)
+    return null
+  }
+}
+
+// Função para salvar comprovante na pasta pdfs
+export const salvarComprovante = async (arquivo: File, boletoId: string): Promise<string | null> => {
+  try {
+    const timestamp = Date.now()
+    const extensao = arquivo.name.split('.').pop() || ''
+    const nomeArquivo = `comprovante_${boletoId}_${timestamp}.${extensao}`
+    
+    console.log('📄 Salvando comprovante:', nomeArquivo)
+    
+    // Criar FormData para enviar o arquivo
+    const formData = new FormData()
+    formData.append('action', 'salvarArquivo')
+    formData.append('arquivo', arquivo)
+    formData.append('nomeArquivo', nomeArquivo)
+    
+    const response = await fetch('/api/database', {
+      method: 'POST',
+      body: formData
+    })
+    
+    const result = await response.json()
+    
+    if (result.success) {
+      console.log('✅ Comprovante salvo com sucesso na pasta pdfs:', nomeArquivo)
+      return nomeArquivo
+    } else {
+      console.error('❌ Erro ao salvar comprovante:', result.error)
+      return null
+    }
+  } catch (error) {
+    console.error('❌ Erro ao salvar comprovante:', error)
     return null
   }
 }

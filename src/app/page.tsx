@@ -1,8 +1,8 @@
 "use client"
 
 import { useState, useEffect } from 'react'
-import { Calendar, FileText, Plus, Check, X, AlertCircle, Upload, Trash2, User, LogOut, Home, Settings, ChevronLeft, ChevronRight, ExternalLink } from 'lucide-react'
-import { boletosService, usuariosService, inicializarBanco, salvarArquivoPDF, abrirArquivo, type Boleto, type Usuario } from '@/lib/local-database'
+import { Calendar, FileText, Plus, Check, X, AlertCircle, Upload, Trash2, User, LogOut, Home, Settings, ChevronLeft, ChevronRight, ExternalLink, Receipt } from 'lucide-react'
+import { boletosService, usuariosService, inicializarBanco, salvarArquivoPDF, salvarComprovante, abrirArquivo, type Boleto, type Usuario } from '@/lib/local-database'
 
 export default function GerenciadorBoletos() {
   const [usuarioLogado, setUsuarioLogado] = useState<Usuario | null>(null)
@@ -24,6 +24,9 @@ export default function GerenciadorBoletos() {
     arquivo: null as File | null,
     codigoBarras: ''
   })
+
+  // Estados para upload de comprovante
+  const [uploadingComprovante, setUploadingComprovante] = useState<string | null>(null)
 
   // Inicializar banco de dados e carregar dados
   useEffect(() => {
@@ -150,6 +153,36 @@ export default function GerenciadorBoletos() {
     } catch (error) {
       console.error('Erro ao alterar status:', error)
       alert('Erro ao atualizar status do boleto.')
+    }
+  }
+
+  // Adicionar comprovante
+  const adicionarComprovante = async (boletoId: string, arquivo: File) => {
+    try {
+      setUploadingComprovante(boletoId)
+      
+      const nomeComprovante = await salvarComprovante(arquivo, boletoId)
+      
+      if (nomeComprovante) {
+        const sucesso = await boletosService.atualizarBoleto(boletoId, { comprovante: nomeComprovante })
+        
+        if (sucesso) {
+          const boletosAtualizados = boletos.map(b => 
+            b.id === boletoId ? { ...b, comprovante: nomeComprovante } : b
+          )
+          setBoletos(boletosAtualizados)
+          alert('Comprovante adicionado com sucesso!')
+        } else {
+          alert('Erro ao salvar comprovante no banco de dados.')
+        }
+      } else {
+        alert('Erro ao salvar comprovante.')
+      }
+    } catch (error) {
+      console.error('Erro ao adicionar comprovante:', error)
+      alert('Erro ao adicionar comprovante.')
+    } finally {
+      setUploadingComprovante(null)
     }
   }
 
@@ -712,10 +745,52 @@ export default function GerenciadorBoletos() {
                                     </button>
                                   </div>
                                 )}
+                                {boleto.comprovante && (
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      onClick={() => abrirArquivo(boleto.comprovante!)}
+                                      className="flex items-center gap-1 text-green-600 hover:text-green-800 transition-colors"
+                                    >
+                                      <Receipt size={14} />
+                                      <span className="text-xs underline">Comprovante</span>
+                                      <ExternalLink size={12} />
+                                    </button>
+                                  </div>
+                                )}
                               </div>
                             </div>
 
                             <div className="flex gap-2">
+                              {/* Botão de adicionar comprovante - só aparece se o boleto estiver pago e não tiver comprovante */}
+                              {boleto.pago && !boleto.comprovante && (
+                                <div className="relative">
+                                  <input
+                                    type="file"
+                                    accept=".pdf,.png,.jpg,.jpeg,.gif,.webp"
+                                    onChange={(e) => {
+                                      const arquivo = e.target.files?.[0]
+                                      if (arquivo) {
+                                        adicionarComprovante(boleto.id, arquivo)
+                                      }
+                                    }}
+                                    className="hidden"
+                                    id={`comprovante-${boleto.id}`}
+                                    disabled={uploadingComprovante === boleto.id}
+                                  />
+                                  <label
+                                    htmlFor={`comprovante-${boleto.id}`}
+                                    className={`px-3 py-2 rounded-lg transition-all duration-300 flex items-center gap-2 text-sm cursor-pointer ${
+                                      uploadingComprovante === boleto.id
+                                        ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                                        : 'bg-purple-500 text-white hover:bg-purple-600'
+                                    }`}
+                                  >
+                                    <Receipt size={14} />
+                                    {uploadingComprovante === boleto.id ? 'Salvando...' : 'Comprovante'}
+                                  </label>
+                                </div>
+                              )}
+
                               <button
                                 onClick={() => alternarStatusPagamento(boleto.id)}
                                 className={`px-3 py-2 rounded-lg transition-all duration-300 flex items-center gap-2 text-sm ${
