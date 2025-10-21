@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from 'react'
-import { Calendar, FileText, Plus, Check, X, AlertCircle, Upload, Trash2, User, LogOut, Home, Settings, ChevronLeft, ChevronRight, ExternalLink, Receipt } from 'lucide-react'
+import { Calendar, FileText, Plus, Check, X, AlertCircle, Upload, Trash2, User, LogOut, Home, Settings, ChevronLeft, ChevronRight, ExternalLink, Receipt, Edit } from 'lucide-react'
 import { boletosService, usuariosService, inicializarBanco, salvarArquivoPDF, salvarComprovante, abrirArquivo, type Boleto, type Usuario } from '@/lib/local-database'
 
 export default function GerenciadorBoletos() {
@@ -27,6 +27,15 @@ export default function GerenciadorBoletos() {
 
   // Estados para upload de comprovante
   const [uploadingComprovante, setUploadingComprovante] = useState<string | null>(null)
+
+  // Estados para edição de boleto
+  const [boletoEditando, setBoletoEditando] = useState<Boleto | null>(null)
+  const [dadosEdicao, setDadosEdicao] = useState({
+    nome: '',
+    valor: '',
+    dataVencimento: '',
+    codigoBarras: ''
+  })
 
   // Inicializar banco de dados e carregar dados
   useEffect(() => {
@@ -186,6 +195,61 @@ export default function GerenciadorBoletos() {
     }
   }
 
+  // Iniciar edição de boleto
+  const iniciarEdicao = (boleto: Boleto) => {
+    setBoletoEditando(boleto)
+    setDadosEdicao({
+      nome: boleto.nome,
+      valor: boleto.valor.toString(),
+      dataVencimento: boleto.dataVencimento,
+      codigoBarras: boleto.codigoBarras || ''
+    })
+  }
+
+  // Salvar edição de boleto
+  const salvarEdicao = async () => {
+    if (!boletoEditando || !dadosEdicao.nome || !dadosEdicao.valor || !dadosEdicao.dataVencimento) {
+      alert('Preencha todos os campos obrigatórios')
+      return
+    }
+
+    try {
+      const sucesso = await boletosService.atualizarBoleto(boletoEditando.id, {
+        nome: dadosEdicao.nome,
+        valor: parseFloat(dadosEdicao.valor),
+        dataVencimento: dadosEdicao.dataVencimento,
+        codigoBarras: dadosEdicao.codigoBarras || undefined
+      })
+
+      if (sucesso) {
+        const boletosAtualizados = boletos.map(b => 
+          b.id === boletoEditando.id ? {
+            ...b,
+            nome: dadosEdicao.nome,
+            valor: parseFloat(dadosEdicao.valor),
+            dataVencimento: dadosEdicao.dataVencimento,
+            codigoBarras: dadosEdicao.codigoBarras || undefined
+          } : b
+        )
+        setBoletos(boletosAtualizados)
+        setBoletoEditando(null)
+        setDadosEdicao({ nome: '', valor: '', dataVencimento: '', codigoBarras: '' })
+        alert('Boleto atualizado com sucesso!')
+      } else {
+        alert('Erro ao atualizar boleto.')
+      }
+    } catch (error) {
+      console.error('Erro ao salvar edição:', error)
+      alert('Erro ao atualizar boleto.')
+    }
+  }
+
+  // Cancelar edição
+  const cancelarEdicao = () => {
+    setBoletoEditando(null)
+    setDadosEdicao({ nome: '', valor: '', dataVencimento: '', codigoBarras: '' })
+  }
+
   // Remover boleto
   const removerBoleto = async (id: string) => {
     if (!confirm('Tem certeza que deseja remover este boleto?')) return
@@ -229,6 +293,30 @@ export default function GerenciadorBoletos() {
   // Verificar se dia tem boletos
   const diaTemBoletos = (dia: number) => {
     return obterBoletosDoDia(dia).length > 0
+  }
+
+  // Obter cor do dia baseado no status dos boletos
+  const obterCorDoDia = (dia: number) => {
+    const boletosDoDia = obterBoletosDoDia(dia)
+    
+    if (boletosDoDia.length === 0) {
+      return 'normal' // Sem boletos
+    }
+
+    const hoje = new Date().toISOString().split('T')[0]
+    const dataFormatada = `${anoAtual}-${String(mesAtual + 1).padStart(2, '0')}-${String(dia).padStart(2, '0')}`
+    const diaJaPassou = dataFormatada < hoje
+    
+    const todosPagos = boletosDoDia.every(boleto => boleto.pago)
+    const temBoletosNaoPagos = boletosDoDia.some(boleto => !boleto.pago)
+
+    if (todosPagos) {
+      return 'verde' // Todos os boletos do dia estão pagos
+    } else if (diaJaPassou && temBoletosNaoPagos) {
+      return 'vermelho' // Dia já passou e ainda tem boletos não pagos
+    } else {
+      return 'amarelo' // Tem boletos mas nem todos estão pagos (dia ainda não passou)
+    }
   }
 
   // Formatar data para exibição
@@ -367,6 +455,77 @@ export default function GerenciadorBoletos() {
       </div>
     </div>
   )
+
+  // Modal de edição
+  const ModalEdicao = () => {
+    if (!boletoEditando) return null
+
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+        <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-md">
+          <h3 className="text-xl font-bold text-gray-800 mb-4">Editar Boleto</h3>
+          
+          <div className="space-y-4">
+            <div>
+              <label className="block text-gray-700 font-medium mb-2">Nome do Boleto</label>
+              <input
+                type="text"
+                value={dadosEdicao.nome}
+                onChange={(e) => setDadosEdicao({...dadosEdicao, nome: e.target.value})}
+                className="w-full border border-gray-300 rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+
+            <div>
+              <label className="block text-gray-700 font-medium mb-2">Valor</label>
+              <input
+                type="number"
+                step="0.01"
+                value={dadosEdicao.valor}
+                onChange={(e) => setDadosEdicao({...dadosEdicao, valor: e.target.value})}
+                className="w-full border border-gray-300 rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+
+            <div>
+              <label className="block text-gray-700 font-medium mb-2">Data de Vencimento</label>
+              <input
+                type="date"
+                value={dadosEdicao.dataVencimento}
+                onChange={(e) => setDadosEdicao({...dadosEdicao, dataVencimento: e.target.value})}
+                className="w-full border border-gray-300 rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+
+            <div>
+              <label className="block text-gray-700 font-medium mb-2">Código de Barras</label>
+              <input
+                type="text"
+                value={dadosEdicao.codigoBarras}
+                onChange={(e) => setDadosEdicao({...dadosEdicao, codigoBarras: e.target.value})}
+                className="w-full border border-gray-300 rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+          </div>
+
+          <div className="flex gap-3 mt-6">
+            <button
+              onClick={cancelarEdicao}
+              className="flex-1 bg-gray-200 text-gray-800 py-3 rounded-lg hover:bg-gray-300 transition-colors"
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={salvarEdicao}
+              className="flex-1 bg-blue-500 text-white py-3 rounded-lg hover:bg-blue-600 transition-colors"
+            >
+              Salvar
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   // Tela Principal
   if (telaAtual === 'home') {
@@ -583,6 +742,7 @@ export default function GerenciadorBoletos() {
         <div className="max-w-6xl mx-auto">
           <Header />
           <Navegacao />
+          <ModalEdicao />
 
           <div className="bg-white rounded-2xl shadow-lg p-6 mb-6">
             {/* Navegação de Mês */}
@@ -637,24 +797,38 @@ export default function GerenciadorBoletos() {
               
               {/* Dias do mês */}
               {diasDoMes.map(dia => {
-                const temBoletos = diaTemBoletos(dia)
+                const corDoDia = obterCorDoDia(dia)
                 const isEscolhido = diaEscolhido === dia
+                
+                let classesCSS = 'p-3 rounded-lg transition-all duration-300 '
+                
+                if (isEscolhido) {
+                  classesCSS += 'bg-blue-500 text-white shadow-lg'
+                } else {
+                  switch (corDoDia) {
+                    case 'verde':
+                      classesCSS += 'bg-green-100 text-green-800 hover:bg-green-200'
+                      break
+                    case 'vermelho':
+                      classesCSS += 'bg-red-100 text-red-800 hover:bg-red-200'
+                      break
+                    case 'amarelo':
+                      classesCSS += 'bg-yellow-100 text-yellow-800 hover:bg-yellow-200'
+                      break
+                    default:
+                      classesCSS += 'bg-gray-50 text-gray-700 hover:bg-gray-100'
+                  }
+                }
                 
                 return (
                   <button
                     key={dia}
                     onClick={() => setDiaEscolhido(dia)}
-                    className={`p-3 rounded-lg transition-all duration-300 ${
-                      isEscolhido
-                        ? 'bg-blue-500 text-white shadow-lg'
-                        : temBoletos
-                          ? 'bg-yellow-100 text-yellow-800 hover:bg-yellow-200'
-                          : 'bg-gray-50 text-gray-700 hover:bg-gray-100'
-                    }`}
+                    className={classesCSS}
                   >
                     <div className="text-center">
                       <div className="font-semibold">{dia}</div>
-                      {temBoletos && (
+                      {diaTemBoletos(dia) && (
                         <div className="text-xs mt-1">
                           {obterBoletosDoDia(dia).length} boleto(s)
                         </div>
@@ -728,8 +902,8 @@ export default function GerenciadorBoletos() {
                                 </div>
                                 {boleto.codigoBarras && (
                                   <div className="flex items-center gap-2">
-                                    <span className="text-xs bg-gray-100 px-2 py-1 rounded">
-                                      Código: {boleto.codigoBarras.substring(0, 20)}...
+                                    <span className="text-xs bg-gray-100 px-2 py-1 rounded break-all">
+                                      Código: {boleto.codigoBarras}
                                     </span>
                                   </div>
                                 )}
@@ -761,6 +935,15 @@ export default function GerenciadorBoletos() {
                             </div>
 
                             <div className="flex gap-2">
+                              {/* Botão Editar */}
+                              <button
+                                onClick={() => iniciarEdicao(boleto)}
+                                className="px-3 py-2 rounded-lg transition-all duration-300 flex items-center gap-2 text-sm bg-blue-500 text-white hover:bg-blue-600"
+                              >
+                                <Edit size={14} />
+                                Editar
+                              </button>
+
                               {/* Botão de adicionar comprovante - só aparece se o boleto estiver pago e não tiver comprovante */}
                               {boleto.pago && !boleto.comprovante && (
                                 <div className="relative">
